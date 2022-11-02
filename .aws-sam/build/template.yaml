@@ -1,0 +1,105 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Unicorn Rentals - unicorn registry
+Resources:
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: Step1_ZendeskIntegration
+      Handler: index.lambda_handler
+      Runtime: python3.9
+      Role:
+        Fn::GetAtt:
+        - LambdaFunctionRole
+        - Arn
+      MemorySize: 512
+      Timeout: 10
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: unicorns
+      Code:
+        ZipFile: "from uuid import UUID\n\nimport boto3\nimport json\nimport os\n\
+          import uuid\nfrom datetime import datetime\nfrom botocore.exceptions import\
+          \ ClientError\n\ndef lambda_handler(event, context):\n    #Lambda handler\
+          \ for birth of a unicorn.\n    \n    \n    # Initialise DDB client\n   \
+          \ DDB_TABLE = os.environ.get(\"DYNAMODB_TABLE\")\n    if DDB_TABLE is None:\n\
+          \        raise ClientError(\"DYNAMODB_TABLE environment variable is undefined\"\
+          )\n    dynamodb = boto3.resource(\"dynamodb\")\n    table = dynamodb.Table(DDB_TABLE)\n\
+          \    \n    \n    # Create new Unicorn TAG\n    unicorn_tag: UUID = str(uuid.uuid4())\n\
+          \    \n    # Get today's date for birthday\n    unicorn_birthday = datetime.now().strftime(\"\
+          %c\")\n\n\n    # Get unicorn details from event\n    event_body = json.loads(event[\"\
+          body\"])\n\n    unicorn = {\n\n        \"id\": unicorn_tag,\n        \"\
+          name\": event_body[\"Name\"],\n        \"weight\": event_body[\"Weight\"\
+          ],\n        \"birthday\": unicorn_birthday,\n    }\n\n    # create entry\
+          \ in ddb for newborn unicorn:\n    response = register_unicorn(table,unicorn)\n\
+          \n    if response[\"ResponseMetadata\"][\"HTTPStatusCode\"] == 200:\n\n\
+          \        # return generated unicorn tag and name back to user:\n       \
+          \ return {\n            \"statusCode\": 200,\n            \"body\": json.dumps(\n\
+          \                {\n                    \"message\": \"A new unicorn is\
+          \ born!!!\",\n                }\n            ),\n        }\n\n\ndef register_unicorn(table,unicorn):\n\
+          \    return table.put_item(Item=unicorn,)\n    \n    # return {\n    # \
+          \    'statusCode': 200,\n    #     'body': json.dumps('Hooray! We have a\
+          \ new unicorn!')\n    # }\n"
+  LambdaFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: /
+      Policies:
+      - PolicyName: AppendToLogsPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            - dynamodb:PutItem
+            Resource: '*'
+  UnicornWebhookAPI:
+    Type: AWS::ApiGatewayV2::Api
+    DependsOn: LambdaFunction
+    Properties:
+      Name: Unicorn-Webhook-API
+      Description: Unicorn-Webhook-API
+      Target:
+        Fn::GetAtt:
+        - LambdaFunction
+        - Arn
+      ProtocolType: HTTP
+  LambdaApiGatewayPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName:
+        Fn::GetAtt:
+        - LambdaFunction
+        - Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn:
+        Fn::Sub: arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${UnicornWebhookAPI}/*
+  DdbTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+      - AttributeName: id
+        AttributeType: N
+      - AttributeName: name
+        AttributeType: S
+      - AttributeName: weight
+        AttributeType: N
+      - AttributeName: birthday
+        AttributeType: S
+      KeySchema:
+      - AttributeName: id
+        KeyType: HASH
+      TableName: unicorns
